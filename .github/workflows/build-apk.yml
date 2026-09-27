@@ -11,16 +11,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Extract Android project ZIP
+
+      - name: Extract Android project
         shell: bash
         run: |
           set -e
 
           if [ ! -f "StudyWithNinshul_Android_Project.zip" ]; then
-            echo "ERROR: StudyWithNinshul_Android_Project.zip not found"
+            echo "ERROR: ZIP file not found"
             exit 1
           fi
 
@@ -29,46 +31,97 @@ jobs:
 
           unzip -q "StudyWithNinshul_Android_Project.zip" -d android-project
 
-          echo "ZIP extracted successfully."
+          echo "Project ZIP extracted successfully."
 
-      - name: Set up JDK 17
+
+      - name: Set up Java 17
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          cmdline-tools-version: '15859902'
-          packages: 'platform-tools'
-          accept-android-sdk-licenses: 'yes'
 
-      - name: Install Android SDK components
+      - name: Install Android SDK manually
         shell: bash
         run: |
           set -e
 
-          sdkmanager "platforms;android-35" \
-                     "build-tools;35.0.0" \
-                     "platform-tools"
+          SDK="$HOME/android-sdk"
 
-          yes | sdkmanager --licenses >/dev/null || true
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+
+          mkdir -p "$SDK/cmdline-tools"
+
+          cd /tmp
+
+          echo "Downloading Android command line tools..."
+
+          curl -L --fail --retry 5 \
+            -o commandlinetools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip
+
+          echo "Extracting Android command line tools..."
+
+          rm -rf cmdline-tools
+          mkdir cmdline-tools
+
+          unzip -q commandlinetools.zip -d cmdline-tools
+
+          mkdir -p "$SDK/cmdline-tools/latest"
+
+          cp -R cmdline-tools/cmdline-tools/* \
+            "$SDK/cmdline-tools/latest/"
+
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK/build-tools/35.0.0" >> "$GITHUB_PATH"
+
+          echo "Android SDK installed successfully."
+
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --version
+
+
+      - name: Accept Android licenses
+        shell: bash
+        run: |
+          set -e
+
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses \
+            > /dev/null || true
+
+          echo "Android licenses accepted."
+
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -e
+
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+          echo "Android SDK packages installed."
+
 
       - name: Find Android project
         shell: bash
         run: |
           set -e
 
-          SETTINGS_FILE=$(find android-project -type f \( \
-            -name "settings.gradle" -o \
-            -name "settings.gradle.kts" \
-          \) -print -quit)
+          SETTINGS_FILE=$(find android-project \
+            -type f \
+            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            -print -quit)
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: Android Gradle project not found."
-            echo "settings.gradle or settings.gradle.kts is missing."
-            find android-project -maxdepth 4 -type f | head -100
+            echo "ERROR: Android project files were not found."
+
+            echo "Files inside ZIP:"
+            find android-project -maxdepth 5 -type f | head -100
+
             exit 1
           fi
 
@@ -76,20 +129,24 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Android project found at:"
+          echo "Android project:"
           echo "$PROJECT_DIR"
+
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.10'
 
-      - name: Build Debug APK
+
+      - name: Build APK
         shell: bash
         run: |
           set -e
 
           cd "$PROJECT_DIR"
+
+          echo "Starting Android build..."
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
@@ -98,7 +155,8 @@ jobs:
             gradle assembleDebug --no-daemon
           fi
 
-      - name: Check APK
+
+      - name: Find APK
         shell: bash
         run: |
           set -e
@@ -113,10 +171,11 @@ jobs:
             exit 1
           fi
 
-          echo "APK generated successfully:"
+          echo "APK FOUND:"
           echo "$APK"
 
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
