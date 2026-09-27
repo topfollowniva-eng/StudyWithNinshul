@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -30,28 +29,48 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android Build Tools
+      - name: Install Android SDK
         shell: bash
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          set -e
+          SDK="$HOME/android-sdk"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          mkdir -p "$SDK/cmdline-tools"
+          cd /tmp
+          curl -L --fail --retry 5 -o commandlinetools.zip https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip
+          rm -rf cmdline-tools
+          mkdir cmdline-tools
+          unzip -q commandlinetools.zip -d cmdline-tools
+          mkdir -p "$SDK/cmdline-tools/latest"
+          cp -R cmdline-tools/cmdline-tools/* "$SDK/cmdline-tools/latest/"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Accept Android licenses
+        shell: bash
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -e
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Find Android project
         shell: bash
         run: |
           set -e
           SETTINGS=$(find android-project -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print -quit)
-
+          
           if [ -z "$SETTINGS" ]; then
             echo "ERROR: Android Gradle project not found."
             exit 1
           fi
-
+          
           PROJECT_DIR=$(dirname "$SETTINGS")
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project found at: $PROJECT_DIR"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -61,9 +80,7 @@ jobs:
         run: |
           set -e
           cd "$PROJECT_DIR"
-
-          echo "Building APK..."
-
+          
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug --no-daemon
@@ -76,13 +93,12 @@ jobs:
         run: |
           set -e
           APK=$(find "$PROJECT_DIR" -type f -path "*/build/outputs/apk/debug/*.apk" -print -quit)
-
+          
           if [ -z "$APK" ]; then
             echo "ERROR: APK was not generated."
             exit 1
           fi
-
-          echo "APK FOUND: $APK"
+          
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
       - name: Upload APK
